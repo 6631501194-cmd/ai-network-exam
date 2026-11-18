@@ -1,0 +1,21 @@
+{# IOS/OSPFv2 configuration for one router. Management interface is never rendered. #}
+configure terminal
+no router ospf {{ pid }}
+{% for i in interfaces %}
+interface {{ i.name }}
+ip address {{ i.ip }} {{ i.mask }}
+no shutdown
+exit
+{% endfor %}
+router ospf {{ pid }}
+router-id {{ router_id }}
+{% for name in passive %}
+passive-interface {{ name }}
+{% endfor %}
+{% for name in active %}
+no passive-interface {{ name }}
+{% endfor %}
+{% for n in networks %}
+network {{ n.net_addr }} {{ n.wildcard }} area {{ area }}
+{% endfor %}
+end

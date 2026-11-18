@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OSPF Automation</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--fg:#1d2330;--muted:#667085;--line:#d9dde3;--accent:#2457d6;--ok:#137a3f;--okbg:#e6f4ec;--bad:#b42318;--badbg:#fdecea;--warn:#8a5a00;--warnbg:#fff4dc;--code:#0f1420;--codefg:#d6e2ff}
+@media (prefers-color-scheme:dark){:root{--bg:#12151b;--card:#1b2029;--fg:#e6e9ef;--muted:#98a2b3;--line:#2e3542;--accent:#7aa2ff;--ok:#5fd08e;--okbg:#14301f;--bad:#ff8a80;--badbg:#3a1714;--warn:#ffcf66;--warnbg:#3a2c0b;--code:#0b0e14;--codefg:#d6e2ff}}
+*{box-sizing:border-box}body{margin:0;font:14px/1.45 system-ui,Segoe UI,sans-serif;background:var(--bg);color:var(--fg)}
+header{display:flex;gap:16px;align-items:center;padding:12px 20px;border-bottom:1px solid var(--line);background:var(--card)}
+header h1{font-size:17px;margin:0}header a{color:var(--accent)}main{max-width:1150px;margin:0 auto;padding:16px}
+section{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px;margin-bottom:14px}
+h2{font-size:15px;margin:0 0 10px}h3{font-size:14px;margin:14px 0 6px}
+button{font:inherit;padding:7px 14px;border-radius:7px;border:1px solid var(--accent);background:var(--accent);color:#fff;cursor:pointer}
+button.sec{background:transparent;color:var(--accent)}button:disabled{opacity:.45;cursor:not-allowed}
+input,select{font:inherit;padding:5px 7px;border:1px solid var(--line);border-radius:6px;background:var(--card);color:var(--fg)}
+table{border-collapse:collapse;width:100%;margin:4px 0 8px}td,th{border-bottom:1px solid var(--line);padding:5px 6px;text-align:left;vertical-align:middle}
+th{font-weight:600;color:var(--muted);font-size:12px}
+pre{background:var(--code);color:var(--codefg);padding:10px;border-radius:8px;overflow:auto;font-size:12.5px;margin:4px 0}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}.muted{color:var(--muted)}
+.msg{padding:8px 10px;border-radius:7px;margin:6px 0}.ok{background:var(--okbg);color:var(--ok)}.bad{background:var(--badbg);color:var(--bad)}.warn{background:var(--warnbg);color:var(--warn)}
+.amb{border:1px solid var(--line);border-left:4px solid var(--warn);border-radius:7px;padding:8px 10px;margin:6px 0}
+.amb.done{border-left-color:var(--ok)}.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:12px;font-weight:600}
+.grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:14px}@media(max-width:800px){.grid{grid-template-columns:1fr}}
+img#preview{max-width:100%;max-height:360px;border:1px solid var(--line);border-radius:8px}
+ul{margin:4px 0;padding-left:20px}.chk{font-weight:600}.chk.y{color:var(--ok)}.chk.n{color:var(--bad)}
+</style>
+</head>
+<body>
+<header><h1>AI Network Automation · OSPF</h1><a href="/jobs">Job monitor →</a><span class="muted" id="health"></span></header>
+<main>
+<section>
+  <h2>1 · Topology diagram</h2>
+  <div class="grid">
+    <div>
+      <div class="row"><input type="file" id="file" accept="image/png,image/jpeg"><button id="gen" disabled>Generate</button></div>
+      <p class="muted">PNG/JPEG ≤ 5 MB. The free Groq tier allows about one analysis per minute.</p>
+      <div class="row"><select id="plans"><option value="">— or open an existing plan —</option></select><button class="sec" id="open">Open</button></div>
+      <div id="genmsg"></div>
+    </div>
+    <div><img id="preview" alt="" hidden></div>
+  </div>
+</section>
+
+<section id="edit" hidden>
+  <h2>2 · Review &amp; resolve the AI analysis <span class="badge" id="pstatus"></span></h2>
+  <div id="ambs"></div>
+  <div class="row"><button class="sec" id="discover">Discover router interfaces</button><span class="muted">read-only <code>show ip interface brief</code> over SSH</span></div>
+  <div id="routers"></div>
+  <h3>PCs (optional — configured by hand on VPCS)</h3>
+  <table id="pcs"><thead><tr><th>Name</th><th>IPv4/prefix</th><th>Gateway</th><th></th></tr></thead><tbody></tbody></table>
+  <button class="sec" id="addpc">Add PC</button>
+  <h3>Links</h3><div id="links" class="muted"></div>
+  <p class="muted">OSPF process <input id="pid" size="4"> area <input id="area" size="6"></p>
+  <div class="row"><button id="save">Save changes</button><span id="dirty" class="muted"></span></div>
+  <div id="savemsg"></div>
+</section>
+
+<section id="flow" hidden>
+  <h2>3 · Review → Validate → Approve → Deploy</h2>
+  <div class="row"><button id="review">Review commands</button><button id="validate">Validate</button></div>
+  <div id="reviewout"></div><div id="valout"></div>
+  <h3>Approval</h3>
+  <label><input type="checkbox" id="confirm"> I reviewed the generated configuration and the validation results and approve deployment.</label>
+  <div class="row" style="margin-top:8px"><button id="approve" disabled>Approve</button><button id="deploy" disabled>Deploy</button></div>
+  <div id="appmsg"></div><div id="jobout"></div>
+</section>
+</main>
+
+<datalist id="none"></datalist>
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+let plan = null, discovered = {}, dirty = false, validation = null, pollTimer = null;
+
+async function api(method, url, body, isForm) {
+  const opt = {method, headers: {}};
+  if (body && !isForm) { opt.headers["Content-Type"] = "application/json"; opt.body = JSON.stringify(body); }
+  if (isForm) opt.body = body;
+  const r = await fetch(url, opt);
+  const t = await r.text(); let j; try { j = JSON.parse(t); } catch { j = {detail: t}; }
+  if (!r.ok) { const d = j.detail; throw new Error(typeof d === "string" ? d : (d && d.message ? d.message + ": " + (d.errors||[]).join(" | ") : JSON.stringify(d))); }
+  return j;
+}
+const msg = (el, cls, html) => { $(el).innerHTML = html ? `<div class="msg ${cls}">${html}</div>` : ""; };
+
+fetch("/health").then(r => r.json()).then(h => {
+  $("#health").textContent = `model ${h.model} · topic ${h.topic} · routers ${Object.entries(h.routers).map(([k,v]) => k+"@"+v.host).join(", ")}` +
+    (h.groq_key_set ? "" : " · GROQ_API_KEY missing") + (h.ssh_password_set ? "" : " · SSH_PASSWORD missing");
+});
+async function loadPlans() {
+  const ps = await api("GET", "/api/plans");
+  $("#plans").innerHTML = '<option value="">— or open an existing plan —</option>' +
+    ps.map(p => `<option value="${esc(p.id)}">${esc(p.created_at)} · ${esc(p.status)} · ${esc(p.deployment_status)}</option>`).join("");
+}
+loadPlans();
+
+$("#file").onchange = () => {
+  const f = $("#file").files[0]; $("#gen").disabled = !f;
+  if (f) { $("#preview").src = URL.createObjectURL(f); $("#preview").hidden = false; }
+};
+$("#gen").onclick = async () => {
+  const fd = new FormData(); fd.append("image", $("#file").files[0]);
+  $("#gen").disabled = true; msg("#genmsg", "warn", "Analysing the diagram with the AI model…");
+  try { setPlan(await api("POST", "/api/analyze", fd, true)); msg("#genmsg", "ok", "Analysis complete. Review the result below."); loadPlans(); }
+  catch (e) { msg("#genmsg", "bad", esc(e.message)); }
+  finally { $("#gen").disabled = false; }
+};
+$("#open").onclick = async () => {
+  const id = $("#plans").value; if (!id) return;
+  const p = await api("GET", "/api/plans/" + id); setPlan(p);
+  $("#preview").src = "/api/plans/" + id + "/image"; $("#preview").hidden = false;
+};
+
+function setPlan(p) {
+  plan = p; dirty = false; validation = p.validation;
+  $("#edit").hidden = false; $("#flow").hidden = false;
+  $("#reviewout").innerHTML = ""; $("#valout").innerHTML = validation ? renderValidation(validation) : "";
+  $("#appmsg").innerHTML = ""; $("#confirm").checked = false;
+  render(); if (p.current_job_id && ["QUEUED","RUNNING"].includes(p.deployment_status)) poll(p.current_job_id);
+}
+const editable = () => plan && ["DRAFT","REVOKED"].includes(plan.status);
+
+function render() {
+  const t = plan.topology, ed = editable();
+  $("#pstatus").textContent = plan.status + " · " + plan.deployment_status;
+  $("#pstatus").className = "badge " + (plan.status === "APPROVED" ? "ok" : plan.status === "REVOKED" ? "bad" : "warn");
+  const resolved = Object.fromEntries((plan.resolved_ambiguities||[]).map(r => [r.ambiguity, r]));
+  $("#ambs").innerHTML = (t.ambiguities.length ? "<h3>Ambiguities flagged by the AI (must be resolved before approval)</h3>" : '<div class="msg ok">No ambiguities flagged.</div>') +
+    t.ambiguities.map((a, i) => resolved[a]
+      ? `<div class="amb done">✔ ${esc(a)}<div class="muted">Resolved: ${esc(resolved[a].note)}</div></div>`
+      : `<div class="amb">${esc(a)}<div class="row" style="margin-top:6px"><label><input type="checkbox" data-amb="${i}" ${ed?"":"disabled"}> resolved</label><input data-note="${i}" placeholder="what you checked / changed" size="50" ${ed?"":"disabled"}></div></div>`).join("");
+  $("#ambs").querySelectorAll("input").forEach(el => el.oninput = el.onchange = markDirty);
+
+  $("#routers").innerHTML = t.routers.map((r, ri) => {
+    const inv = plan.inventory[r.name] || {}, disc = discovered[r.name];
+    const dl = disc && disc.interfaces ? `<datalist id="dl${ri}">${disc.interfaces.map(i => `<option value="${esc(i.name)}">${esc(i.ip||"unassigned")} ${esc(i.status)}${i.carries_ssh?" · SSH":""}</option>`).join("")}</datalist>` : "";
+    return `<h3>${esc(r.name)} <span class="muted">${esc(inv.host||"not in .env")} · management ${esc(inv.management_interface||"?")}</span>
+      &nbsp; Router ID <input data-rid="${ri}" value="${esc(r.router_id||"")}" size="12" ${ed?"":"disabled"}></h3>${dl}
+      ${disc && disc.error ? `<div class="msg bad">${esc(disc.error)}</div>` : ""}
+      <table><thead><tr><th>Interface</th><th>Role</th><th>IPv4/prefix</th><th>Diagram label</th><th>On router</th></tr></thead><tbody>
+      ${r.interfaces.map((i, ii) => `<tr><td><input data-if="${ri}.${ii}" list="dl${ri}" value="${esc(i.name||"")}" size="18" ${ed?"":"disabled"}></td>
+        <td><select data-role="${ri}.${ii}" ${ed?"":"disabled"}>${["lan","transit","management","unknown"].map(o => `<option ${o===i.role?"selected":""}>${o}</option>`).join("")}</select></td>
+        <td><input data-ip="${ri}.${ii}" value="${esc(i.ipv4_cidr||"")}" size="16" placeholder="${i.role==="management"?"never configured":"a.b.c.d/nn"}" ${ed && i.role!=="management"?"":"disabled"}></td>
+        <td class="muted">${esc(i.diagram_label||"—")}</td><td>${rowCheck(r.name, i)}</td></tr>`).join("")}
+      </tbody></table>`;
+  }).join("");
+  $("#routers").querySelectorAll("input,select").forEach(el => el.onchange = el.oninput = onRouterEdit);
+
+  $("#pcs tbody").innerHTML = t.pcs.map((p, pi) => `<tr><td><input data-pc="${pi}.name" value="${esc(p.name)}" size="8" ${ed?"":"disabled"}></td>
+    <td><input data-pc="${pi}.ipv4_cidr" value="${esc(p.ipv4_cidr||"")}" size="16" ${ed?"":"disabled"}></td>
+    <td><input data-pc="${pi}.gateway" value="${esc(p.gateway||"")}" size="14" ${ed?"":"disabled"}></td>
+    <td>${ed?`<button class="sec" data-delpc="${pi}">remove</button>`:""}</td></tr>`).join("") || '<tr><td colspan="4" class="muted">No PCs in the plan.</td></tr>';
+  $("#pcs").querySelectorAll("input").forEach(el => el.oninput = () => { const [i,k] = el.dataset.pc.split("."); t.pcs[i][k] = el.value; markDirty(); });
+  $("#pcs").querySelectorAll("[data-delpc]").forEach(el => el.onclick = () => { t.pcs.splice(+el.dataset.delpc, 1); markDirty(); render(); });
+  $("#addpc").disabled = !ed;
+  $("#links").innerHTML = t.links.map(l => `${esc(l.device_a)} ${esc(l.interface_a||"?")} ↔ ${esc(l.device_b)} ${esc(l.interface_b||"?")}`).join("<br>") || "none";
+  $("#pid").value = t.ospf_process_id ?? ""; $("#area").value = t.ospf_area ?? "";
+  $("#pid").disabled = $("#area").disabled = !ed;
+  $("#save").disabled = !ed || !dirty; $("#discover").disabled = false;
+  updateButtons();
+}
+
+function rowCheck(router, i) {
+  const d = discovered[router]; if (!d || !d.interfaces) return '<span class="muted">—</span>';
+  const hit = d.interfaces.find(x => x.name === i.name);
+  if (!hit) return '<span class="chk n">✘ not on router</span>';
+  if (i.role !== "management" && (hit.carries_ssh || i.name === d.management_interface)) return '<span class="chk n">✘ carries SSH</span>';
+  return `<span class="chk y">✔ exists</span> <span class="muted">${esc(hit.ip||"unassigned")}</span>`;
+}
+function blockedRows() {
+  if (!plan) return false;
+  return plan.topology.routers.some(r => r.interfaces.some(i => ["lan","transit"].includes(i.role) && rowCheck(r.name, i).includes("✘")));
+}
+function onRouterEdit(e) {
+  const el = e.target, t = plan.topology;
+  if (el.dataset.rid !== undefined) t.routers[el.dataset.rid].router_id = el.value;
+  else {
+    const key = el.dataset.if || el.dataset.role || el.dataset.ip; const [ri, ii] = key.split(".").map(Number);
+    const r = t.routers[ri], itf = r.interfaces[ii];
+    if (el.dataset.if !== undefined) {
+      const old = itf.name; itf.name = el.value;
+      t.links.forEach(l => { if (l.device_a === r.name && l.interface_a === old) l.interface_a = el.value;
+                             if (l.device_b === r.name && l.interface_b === old) l.interface_b = el.value; });
+    } else if (el.dataset.role !== undefined) { itf.role = el.value; if (el.value === "management") itf.ipv4_cidr = null; markDirty(); render(); return; }
+    else itf.ipv4_cidr = el.value;
+  }
+  markDirty();
+  if (e.type === "change") render();
+}
+function markDirty() { dirty = true; $("#dirty").textContent = "Unsaved changes — Review/Validate disabled until saved."; $("#save").disabled = !editable(); updateButtons(); }
+$("#addpc").onclick = () => { plan.topology.pcs.push({name: "PC" + (plan.topology.pcs.length + 1), ipv4_cidr: "", gateway: ""}); markDirty(); render(); };
+$("#pid").oninput = () => { plan.topology.ospf_process_id = parseInt($("#pid").value) || null; markDirty(); };
+$("#area").oninput = () => { plan.topology.ospf_area = $("#area").value; markDirty(); };
+
+$("#save").onclick = async () => {
+  const resolved = [];
+  $("#ambs").querySelectorAll("[data-amb]").forEach(cb => {
+    if (cb.checked) resolved.push({ambiguity: plan.topology.ambiguities[cb.dataset.amb], note: $(`[data-note="${cb.dataset.amb}"]`).value});
+  });
+  if (resolved.some(r => !r.note.trim())) { msg("#savemsg", "bad", "Write a note for every ambiguity you mark as resolved."); return; }
+  try { const p = await api("PUT", `/api/plans/${plan.id}/topology`, {topology: plan.topology, resolved});
+        setPlan(p); msg("#savemsg", "ok", "Saved. Validation must be run again."); }
+  catch (e) { msg("#savemsg", "bad", esc(e.message)); }
+};
+$("#discover").onclick = async () => {
+  $("#discover").disabled = true; msg("#savemsg", "warn", "Connecting to routers (read-only)…");
+  try { discovered = await api("POST", `/api/plans/${plan.id}/discover`); msg("#savemsg", "", ""); render(); }
+  catch (e) { msg("#savemsg", "bad", esc(e.message)); } finally { $("#discover").disabled = false; }
+};
+
+function updateButtons() {
+  const block = dirty || blockedRows();
+  $("#review").disabled = $("#validate").disabled = block;
+  $("#approve").disabled = block || !editable() || !(validation && validation.passed) || !$("#confirm").checked;
+  $("#deploy").disabled = !(plan && plan.status === "APPROVED" && ["NOT_DEPLOYED","FAILED"].includes(plan.deployment_status));
+}
+$("#confirm").onchange = updateButtons;
+
+function list(items, cls) { return items && items.length ? `<div class="msg ${cls}"><ul>${items.map(x => `<li>${esc(x)}</li>`).join("")}</ul></div>` : ""; }
+function commandsHtml(cbr) { return Object.entries(cbr||{}).map(([r, c]) => `<h3>${esc(r)}</h3><pre>${esc(c.join("\n"))}</pre>`).join(""); }
+
+$("#review").onclick = async () => {
+  try {
+    const r = await api("GET", `/api/plans/${plan.id}/review`);
+    $("#reviewout").innerHTML = `<h3>Proposed configuration</h3>` +
+      (Object.keys(r.commands_by_router).length ? `<div class="grid">${commandsHtml(r.commands_by_router).replace(/<h3>/g,'<div><h3>').replace(/<\/pre>/g,'</pre></div>')}</div>` : '<div class="msg bad">No configuration could be generated.</div>') +
+      list(r.static_errors, "bad") + list(r.warnings, "warn") +
+      (r.resolved_ambiguities.length ? `<p class="muted">Resolved ambiguities: ${r.resolved_ambiguities.map(x => esc(x.ambiguity) + " → " + esc(x.note)).join("; ")}</p>` : "");
+  } catch (e) { $("#reviewout").innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
+};
+function renderValidation(v) {
+  const live = Object.values(v.live || {}).map(l => `<li>${esc(l.router)} ${esc(l.host)}: ${l.reachable ? `SSH ok, hostname ${esc(l.hostname)}, privilege ${esc(l.privilege)}, SSH on ${esc(l.ssh_interface)}` : "unreachable"} ${l.errors.length ? "✘" : "✔"}</li>`).join("");
+  return `<h3>Validation ${v.passed ? '<span class="badge ok">PASSED</span>' : '<span class="badge bad">FAILED</span>'} <span class="muted">${esc(v.validated_at||"")}</span></h3>
+    <p class="muted">Static checks: addressing, subnet consistency, interface mapping, OSPF settings, ambiguities. Live checks (read-only SSH): reachability, hostname, privilege 15, interface exists, management protection.</p>
+    ${list(v.errors, "bad")}${list(v.warnings, "warn")}<ul>${live}</ul>`;
+}
+$("#validate").onclick = async () => {
+  $("#validate").disabled = true; $("#valout").innerHTML = '<div class="msg warn">Validating (includes read-only SSH to the routers)…</div>';
+  try { validation = await api("POST", `/api/plans/${plan.id}/validate`); plan.validation = validation; $("#valout").innerHTML = renderValidation(validation); }
+  catch (e) { $("#valout").innerHTML = `<div class="msg bad">${esc(e.message)}</div>`; }
+  updateButtons();
+};
+$("#approve").onclick = async () => {
+  $("#approve").disabled = true; msg("#appmsg", "warn", "Re-validating and approving…");
+  try { const p = await api("POST", `/api/plans/${plan.id}/approve`, {confirmation: "APPROVE"}); setPlan(p);
+        msg("#appmsg", "ok", `Approved. Config SHA-256 <code>${esc(p.config_sha256)}</code>`); }
+  catch (e) { msg("#appmsg", "bad", esc(e.message)); updateButtons(); }
+};
+$("#deploy").onclick = async () => {
+  if (!confirm("Deploy the approved configuration to " + Object.keys(plan.approved_config.commands_by_router).join(", ") + " via Kafka?")) return;
+  $("#deploy").disabled = true;
+  try { const d = await api("POST", `/api/plans/${plan.id}/deploy`);
+        msg("#appmsg", "ok", `Job ${esc(d.job_id)} queued. Kafka message:<pre>${esc(JSON.stringify(d.kafka_message, null, 2))}</pre>`);
+        plan.deployment_status = "QUEUED"; render(); poll(d.job_id); }
+  catch (e) { msg("#appmsg", "bad", esc(e.message)); updateButtons(); }
+};
+function poll(jobId) {
+  clearInterval(pollTimer);
+  const tick = async () => {
+    const j = await api("GET", "/api/jobs/" + jobId);
+    const cls = j.status === "SUCCESS" ? "ok" : j.status === "FAILED" ? "bad" : "warn";
+    $("#jobout").innerHTML = `<div class="msg ${cls}"><b>${esc(j.status)}</b> · ${esc(j.stage)} ${j.error ? "· " + esc(j.error) : ""} · <a href="/jobs?job=${esc(j.id)}">open in job monitor</a></div>`;
+    if (["SUCCESS","FAILED","REVOKED"].includes(j.status)) { clearInterval(pollTimer); plan = await api("GET", "/api/plans/" + plan.id); render(); }
+  };
+  tick(); pollTimer = setInterval(tick, 3000);
+}
+</script>
+</body>
+</html>
